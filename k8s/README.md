@@ -1,7 +1,7 @@
 Sysbox-deploy-k8s image generation and update procedure
 =======================================================
 
-1) Build the sysbox-deploy images through the usual `make <target>` method OR `docker buildx build --tag <yourDockerId/sysbox-deploy-k8s> k8s/. -f k8s/Dockerfile.crio --build-arg sys_arch=<target-arch>`
+1) Build the sysbox-deploy images through the usual `make <target>` method
 
   NOTE: The process must be completed in every supported architecture (i.e.,
   amd64 and arm64).
