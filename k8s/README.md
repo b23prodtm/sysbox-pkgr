@@ -16,23 +16,23 @@ platform architecture being used.
 ```
 $ docker images
 REPOSITORY                           TAG       IMAGE ID       CREATED              SIZE
-ghcr.io/nestybox/sysbox-deploy-k8s   v0.5.2    eb28ac89b60f   About a minute ago   982MB
+docker.io/bprtkop/sysbox-deploy-k8s   v0.6.7    8c07d12c63f2   About a minute ago   982MB
 
-$ docker tag eb28ac89b60f ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_arm64
+$ docker tag 8c07d12c63f2 docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_arm64
 
 $ docker images
 REPOSITORY                           TAG            IMAGE ID       CREATED          SIZE
-ghcr.io/nestybox/sysbox-deploy-k8s   v0.5.2         eb28ac89b60f   7 minutes ago    982MB
-ghcr.io/nestybox/sysbox-deploy-k8s   v0.5.2_arm64   eb28ac89b60f   7 minutes ago    982MB
-ghcr.io/nestybox/sysbox-deploy-k8s   v0.5.2_amd64   c23934aef102   7 minutes ago    970MB
+docker.io/bprtkop/sysbox-deploy-k8s   v0.6.7         8c07d12c63f2   7 minutes ago    982MB
+docker.io/bprtkop/sysbox-deploy-k8s   v0.6.7_arm64   8c07d12c63f2   7 minutes ago    982MB
+docker.io/bprtkop/sysbox-deploy-k8s   v0.6.7_amd64   c23934aef102   7 minutes ago    970MB
 ```
 
 
 3) Push each image to ghcr.io (for both supported platforms):
 
 ```
-$ docker push ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_arm64
-$ docker push ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_amd64
+$ docker push docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_arm64
+$ docker push docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_amd64
 ```
 
 4) Now is time to update the existing manifest to point to the new image components. This
@@ -42,23 +42,23 @@ utilized to build the sysbox-deploy images.
   * We start by removing the current manifests (in case they are already present locally).
 
 ```
-$ docker manifest rm ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2
-$ docker manifest rm ghcr.io/nestybox/sysbox-deploy-k8s:latest
+$ docker manifest rm docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7
+$ docker manifest rm docker.io/bprtkop/sysbox-deploy-k8s:latest
 ```
 
   * Now we recreate each manifest by pointing it to the platform-specific images previously
   created (which don't need to be present/fetched locally for this operation to succeed).
 
 ```
-$ docker manifest create ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2 --amend ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_amd64 --amend ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_arm64
-$ docker manifest create ghcr.io/nestybox/sysbox-deploy-k8s:latest --amend ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_amd64 --amend ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2_arm64
+$ docker manifest create docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7 --amend docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_amd64 --amend docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_arm64
+$ docker manifest create docker.io/bprtkop/sysbox-deploy-k8s:latest --amend docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_amd64 --amend docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7_arm64
 ```
 
  * Finally, we push the newly updated manifests to ghcr.io:
 
 ```
-$ docker manifest push ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2
-$ docker manifest push ghcr.io/nestybox/sysbox-deploy-k8s:latest
+$ docker manifest push docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7
+$ docker manifest push docker.io/bprtkop/sysbox-deploy-k8s:latest
 ```
 
 5) Verify in Github web-portal that the image-digests of both the manifest and the images
@@ -72,10 +72,10 @@ $ docker images --digests | egrep "sysbox-deploy"
 ``
 
 ```
-$ docker manifest inspect ghcr.io/nestybox/sysbox-deploy-k8s:v0.5.2
+$ docker manifest inspect docker.io/bprtkop/sysbox-deploy-k8s:v0.6.7
 ...
 
-$ docker manifest inspect ghcr.io/nestybox/sysbox-deploy-k8s:latest
+$ docker manifest inspect docker.io/bprtkop/sysbox-deploy-k8s:latest
 ...
 
 ````
