@@ -28,6 +28,10 @@ spec:
               fieldPath: spec.nodeName
         securityContext:
           privileged: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+            - SYS_RESOURCE
         volumeMounts:
         - name: host-etc
           mountPath: /mnt/host/etc
