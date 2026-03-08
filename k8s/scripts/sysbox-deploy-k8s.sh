@@ -49,6 +49,8 @@ host_etc="/mnt/host/etc"
 host_os_release="/mnt/host/os-release"
 host_crio_conf_file="${host_etc}/crio/crio.conf"
 host_crio_conf_file_backup="${host_crio_conf_file}.orig"
+host_containerd_conf_file="${host_etc}/containerd/config.toml"
+host_containerd_conf_file_backup="${host_containerd_conf_file}.orig"
 host_run="/mnt/host/run"
 host_var_lib="/mnt/host/var/lib"
 host_var_lib_sysbox_deploy_k8s="${host_var_lib}/sysbox-deploy-k8s"
@@ -90,7 +92,8 @@ sys_arch=""
 # Installation flags
 do_sysbox_install="true"
 do_sysbox_update="false"
-do_crio_install="true"
+do_crio_install="false"  # only set to true if containerd does not support user-namespaces with alternative runtimes.
+do_kubelet_use_crio="false"
 sysbox_install_in_progress="false"
 
 #
@@ -485,40 +488,39 @@ function install_sysbox_deps() {
 
 	local kversion=$(echo $os_kernel_release | cut -d "." -f1-2)
 	if semver_lt $kversion 5.4; then
-		echo "Kernel has version $kversion, which is below the min required for shiftfs ($shiftfs_min_kernel_ver); skipping shiftfs installation."
+		echo "Skipping shiftfs installation (kernel version $kversion is below the min required for shiftfs ($shiftfs_min_kernel_ver))."
 		return
 	fi
 
 	if host_flatcar_distro; then
 		install_sysbox_deps_flatcar
 	else
-		echo "Copying shiftfs sources to host ..."
 		if semver_ge $kversion 5.4 && semver_lt $kversion 5.8; then
-			echo "Kernel version $kversion is >= 5.4 and < 5.8"
 			cp -r "/opt/shiftfs-k5.4" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.4 sources to host (kernel version $kversion is >= 5.4 and < 5.8)."
 		elif semver_ge $kversion 5.8 && semver_lt $kversion 5.11; then
-			echo "Kernel version $kversion is >= 5.8 and < 5.11"
 			cp -r "/opt/shiftfs-k5.10" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.10 sources to host (kernel version $kversion is >= 5.8 and < 5.11)."
 		elif semver_ge $kversion 5.11 && semver_lt $kversion 5.13; then
-			echo "Kernel version $kversion is >= 5.11 and < 5.13"
 			cp -r "/opt/shiftfs-k5.11" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.11 sources to host (kernel version $kversion is >= 5.11 and < 5.13)."
 		elif semver_ge $kversion 5.13 && semver_lt $kversion 5.15; then
-			echo "Kernel version $kversion is >= 5.13 and < 5.15"
 			cp -r "/opt/shiftfs-k5.13" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.13 sources to host (kernel version $kversion is >= 5.13 and < 5.15)."
 		elif semver_ge $kversion 5.15 && semver_lt $kversion 5.17; then
-			echo "Kernel version $kversion is >= 5.15 and < 5.17"
 			cp -r "/opt/shiftfs-k5.16" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.16 sources to host (kernel version $kversion is >= 5.15 and < 5.17)."
 		elif semver_ge $kversion 5.17 && semver_lt $kversion 5.18; then
-			echo "Kernel version $kversion is 5.17"
 			cp -r "/opt/shiftfs-k5.17" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.17 sources to host (kernel version $kversion is 5.17)."
 		elif semver_ge $kversion 5.18 && semver_lt $kversion 6.1; then
-			echo "Kernel version $kversion is >= 5.18 and < 6.1"
 			cp -r "/opt/shiftfs-k5.18" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k5.18 sources to host (kernel version $kversion is >= 5.18 and < 6.1)."
 		elif semver_ge $kversion 6.1 && semver_lt $kversion 6.3; then
-			echo "Kernel version $kversion is >= 6.1 and < 6.3"
 			cp -r "/opt/shiftfs-k6.1" "$host_run/shiftfs-dkms"
+			echo "Copied shiftfs-k6.1 sources to host (kernel version $kversion is >= 6.1 and < 6.3)."
 		else
-			echo "Kernel version $kversion, which is above the max required for shiftfs ($shiftfs_max_kernel_ver); skipping shiftfs installation."
+			echo "Skipping shiftfs installation (kernel version $kversion is above the max required for shiftfs ($shiftfs_max_kernel_ver))."
 			# dont copy shiftfs, but still proceed to install other deps
 		fi
 	fi
@@ -666,6 +668,70 @@ function unconfig_crio_for_sysbox() {
 }
 
 #
+# Containerd Configuration Functions
+#
+
+function config_containerd_for_sysbox() {
+	echo "Adding Sysbox to containerd config ..."
+
+	# Backup the original containerd config if not already backed up
+	if [ ! -f "${host_containerd_conf_file_backup}" ]; then
+		cp "${host_containerd_conf_file}" "${host_containerd_conf_file_backup}"
+	fi
+
+	# Determine the correct sysbox-runc path
+	local sysbox_runc_path="/usr/bin/sysbox-runc"
+	if host_flatcar_distro; then
+		sysbox_runc_path="/opt/bin/sysbox-runc"
+	fi
+
+	# Check if sysbox-runc runtime section already exists
+	if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
+		echo "sysbox-runc runtime already configured in containerd config"
+	else
+		echo "Configuring sysbox-runc runtime in containerd config ..."
+
+		# Set the runtime_type
+		dasel put string -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.runtime_type" \
+			-v "io.containerd.runc.v2"
+
+		# Set BinaryName option
+		dasel put string -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.BinaryName" \
+			-v "${sysbox_runc_path}"
+
+		# Set SystemdCgroup option
+		dasel put bool -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
+			-v true
+	fi
+
+	echo "Restarting containerd to apply changes ..."
+	systemctl restart containerd
+}
+
+function unconfig_containerd_for_sysbox() {
+	echo "Removing Sysbox from containerd config ..."
+
+	if [ -f "${host_containerd_conf_file}" ]; then
+		# Check if sysbox-runc runtime configuration exists
+		if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
+			echo "Removing sysbox-runc runtime configuration ..."
+
+			# Delete the entire sysbox-runc runtime section using dasel
+			dasel delete -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc"
+
+			echo "Restarting containerd to apply changes ..."
+			systemctl restart containerd
+		else
+			echo "sysbox-runc runtime not found in containerd config"
+		fi
+	fi
+}
+
+#
 # General Helper Functions
 #
 
@@ -789,11 +855,10 @@ function is_supported_k8s_version() {
 
 	local ver=$k8s_version
 
-	if [[ "$ver" == "v1.29" ]] ||
-		[[ "$ver" == "v1.30" ]] ||
-		[[ "$ver" == "v1.31" ]] ||
-		[[ "$ver" == "v1.32" ]] ||
-		[[ "$ver" == "v1.33" ]]; then
+	if [[ "$ver" == "v1.32" ]] ||
+		[[ "$ver" == "v1.33" ]] ||
+		[[ "$ver" == "v1.34" ]] ||
+		[[ "$ver" == "v1.35" ]] ; then
 		return
 	fi
 
@@ -806,7 +871,10 @@ function is_supported_k8s_version() {
 		[[ "$ver" == "v1.25" ]] ||
 		[[ "$ver" == "v1.26" ]] ||
 		[[ "$ver" == "v1.27" ]] ||
-		[[ "$ver" == "v1.28" ]] ; then
+		[[ "$ver" == "v1.28" ]] ||
+		[[ "$ver" == "v1.29" ]] ||
+		[[ "$ver" == "v1.30" ]] ||
+		[[ "$ver" == "v1.31" ]] ; then
 		echo "Unsupported kubernetes version: $ver (EOL release)."
 	fi
 
@@ -920,10 +988,77 @@ function rm_taint_from_node() {
 	kubectl taint nodes "$NODE_NAME" "$taint"-
 }
 
-function install_precheck() {
-	if systemctl is-active --quiet crio; then
-		do_crio_install="false"
+function is_containerd_with_userns() {
+
+	# containerd 2.0 introduces support for user-namespaces, but versions 2.0.1
+	# through 2.0.4 have a bug that prevents user-namespaced pods with alternative
+	# runtimes (like Sysbox) from working properly. The bug causes the pod sandbox
+	# to use the alternative runtime, but containers within the sandbox still use
+	# the default runc runtime.
+
+	local runtime_version=$(kubectl get node $NODE_NAME -o jsonpath='{.status.nodeInfo.containerRuntimeVersion}')
+
+	# Check if it's containerd
+	if ! echo "$runtime_version" | grep -q "containerd://"; then
+		return 1
 	fi
+
+	# Extract version number (e.g., "containerd://2.0.4" -> "2.0.4")
+	local version=$(echo "$runtime_version" | sed 's/containerd:\/\///')
+
+	echo "Detected containerd version $version."
+
+	# Check if version >= 2.0.0
+	version_compare "$version" "2.0.0"
+	local cmp_result=$?
+	if [[ ! $cmp_result =~ ^[01]$ ]]; then
+		echo "containerd version $version does not support user-namespaces (requires >= 2.0.0)."
+		return 1
+	fi
+
+	# Exclude buggy versions 2.0.1 through 2.0.4 (inclusive)
+	version_compare "$version" "2.0.1"
+	local cmp_ge_201=$?
+	version_compare "2.0.4" "$version"
+	local cmp_204_ge=$?
+
+	if [[ $cmp_ge_201 =~ ^[01]$ ]] && [[ $cmp_204_ge =~ ^[01]$ ]]; then
+		echo "containerd version $version does not support user-namespaces with alternative runtimes (buggy versions 2.0.1 -> 2.0.4)."
+		return 1
+	fi
+
+	return 0
+}
+
+function runtime_precheck() {
+	do_crio_install="false"
+	do_kubelet_use_crio="false"
+
+	# env var SYSBOX_USE_CRIO=true|yes forces CRI-O installation
+	# (may be set via ConfigMap for testing purposes).
+	if [[ "${SYSBOX_USE_CRIO:-}" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])$ ]]; then
+		if ! systemctl is-active --quiet crio; then
+			do_crio_install="true"
+			do_kubelet_use_crio="true"
+			echo "Will install CRI-O as container runtime for Sysbox (SYSBOX_USE_CRIO=${SYSBOX_USE_CRIO})."
+		fi
+
+	elif is_containerd_with_userns; then
+		echo "Will use containerd as the container runtime for Sysbox (containerd version supports user-namespaces)."
+
+	else
+		if ! systemctl is-active --quiet crio; then
+			do_crio_install="true"
+			do_kubelet_use_crio="true"
+			echo "Will install CRI-O as container runtime for Sysbox (containerd version does NOT support user-namespaces)."
+		fi
+	fi
+}
+
+function install_precheck() {
+
+	# check if we need to install CRI-O or not
+	runtime_precheck
 
 	if systemctl is-active --quiet sysbox; then
 		do_sysbox_install="false"
@@ -1186,7 +1321,7 @@ function main() {
 		# Prevent new pods being scheduled till sysbox installation/update is completed.
 		add_taint_to_node "${k8s_taints}"
 
-		# Install CRI-O
+		# Install CRI-O (if necessary)
 		if [[ "$do_crio_install" == "true" ]]; then
 			add_label_to_node "crio-runtime=installing"
 			deploy_crio_installer_service
@@ -1214,6 +1349,10 @@ function main() {
 				config_crio_for_sysbox
 				crio_restart_pending=true
 			fi
+			# Configure containerd for sysbox-runc when using containerd 2.0 with userns support
+			if is_containerd_with_userns; then
+				config_containerd_for_sysbox
+			fi
 			echo "yes" >${host_var_lib_sysbox_deploy_k8s}/sysbox_installed
 			echo "$os_kernel_release" >${host_var_lib_sysbox_deploy_k8s}/os_kernel_release
 		fi
@@ -1222,26 +1361,30 @@ function main() {
 			restart_crio
 		fi
 
-		# Switch the K8s runtime to CRI-O.
+		# Switch the K8s runtime to CRI-O (if necessary)
 		#
 		# Note: this will configure the Kubelet to use CRI-O and restart it,
 		# thereby killing all pods on the K8s node (including this daemonset).
 		# The K8s control plane will then re-create the pods, but this time
 		# with CRI-O. The operation can take up to 1 minute.
-		if [[ "$k8s_runtime" != "crio" ]]; then
-			echo "yes" >${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured
-			deploy_kubelet_config_service
-		fi
+		if [[ "$do_kubelet_use_crio" == "true" ]]; then
+			if [[ "$k8s_runtime" != "crio" ]]; then
+				echo "yes" >${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured
+				deploy_kubelet_config_service
+			fi
 
-		# Kubelet config service cleanup
-		if [ -f ${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured ]; then
-			remove_kubelet_config_service
-			rm -f ${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured
-			echo "Kubelet reconfig completed."
+			# Kubelet config service cleanup
+			if [ -f ${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured ]; then
+				remove_kubelet_config_service
+				rm -f ${host_var_lib_sysbox_deploy_k8s}/kubelet_reconfigured
+				echo "Kubelet reconfig completed."
+			fi
+
+			add_label_to_node "crio-runtime=running"
 		fi
 
 		# Remove all the sysbox pods in the node to ensure that the newly installed/updated
-		# sysbox binaries are used. No action will be taken if this daemon-set is being updated
+		# sysbox binaries are used. No action will be taken if this daemonset is being updated
 		# with no changes to the sysbox runtime or any of its dependencies.
 		if [[ "$do_sysbox_install" == "true" ]] ||
 			[[ "$do_sysbox_update" == "true" ]] ||
@@ -1249,13 +1392,17 @@ function main() {
 			delete_sysbox_pods
 		fi
 
-		add_label_to_node "crio-runtime=running"
 		add_label_to_node "sysbox-runtime=running"
 		rm_taint_from_node "${k8s_taints}"
 
 		if [[ "$do_sysbox_install" == "true" ]] || [[ "$sysbox_install_in_progress" == "true" ]]; then
-			echo "The k8s runtime on this node is now CRI-O with Sysbox."
+			if [[ "$do_kubelet_use_crio" == "true" ]]; then
+				echo "The k8s runtime on this node is CRI-O + Sysbox."
+			else
+				echo "The k8s runtime on this node is containerd + Sysbox."
+			fi
 			echo "$sysbox_edition installation completed (version $sysbox_version)."
+
 		elif [[ "$do_sysbox_update" == "true" ]]; then
 			echo "$sysbox_edition update completed (version $sysbox_version)."
 		fi
@@ -1286,10 +1433,14 @@ function main() {
 		# Uninstall Sysbox
 		if [ -f ${host_var_lib_sysbox_deploy_k8s}/sysbox_installed ]; then
 			add_label_to_node "sysbox-runtime=removing"
-			unconfig_crio_for_sysbox
+			if [ -f ${host_var_lib_sysbox_deploy_k8s}/crio_installed ]; then
+				unconfig_crio_for_sysbox
+				crio_restart_pending=true
+			else
+				unconfig_containerd_for_sysbox
+			fi
 			remove_sysbox
 			remove_sysbox_deps
-			crio_restart_pending=true
 			rm -f ${host_var_lib_sysbox_deploy_k8s}/sysbox_installed
 			rm -f ${host_var_lib_sysbox_deploy_k8s}/os_kernel_release
 			rm_label_from_node "sysbox-runtime"
@@ -1303,6 +1454,7 @@ function main() {
 			crio_restart_pending=false
 			rm -f ${host_var_lib_sysbox_deploy_k8s}/crio_installed
 			rm_label_from_node "crio-runtime"
+			echo "CRI-O removal completed."
 		fi
 
 		rm -rf ${host_var_lib_sysbox_deploy_k8s}
@@ -1316,8 +1468,6 @@ function main() {
 		delete_sysbox_pods
 
 		rm_taint_from_node "${k8s_taints}"
-
-		echo "The k8s runtime on this node is now $k8s_runtime."
 		;;
 
 	*)
